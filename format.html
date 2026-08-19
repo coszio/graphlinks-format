@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HNSW graph links — serialized format</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb;
+    --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --baseline: #c3c2b7; --hairline: rgba(11,11,11,.10);
+    --l0:#2a78d6; --l1:#eb6834; --l2:#1baf7a; --l3:#eda100; --l4:#e87ba4;
+    --li0:#ffffff; --li1:#0b0b0b; --li2:#0b0b0b; --li3:#0b0b0b; --li4:#0b0b0b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19;
+      --ink: #ffffff; --ink2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --baseline: #383835; --hairline: rgba(255,255,255,.10);
+      --l0:#3987e5; --l1:#d95926; --l2:#199e70; --l3:#c98500; --l4:#d55181;
+      --li0:#0b0b0b; --li1:#0b0b0b; --li2:#0b0b0b; --li3:#0b0b0b; --li4:#0b0b0b;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19;
+    --ink: #ffffff; --ink2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --baseline: #383835; --hairline: rgba(255,255,255,.10);
+    --l0:#3987e5; --l1:#d95926; --l2:#199e70; --l3:#c98500; --l4:#d55181;
+    --li0:#0b0b0b; --li1:#0b0b0b; --li2:#0b0b0b; --li3:#0b0b0b; --li4:#0b0b0b;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--page); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; justify-content: center; padding: 24px 12px;
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px;
+    padding: 20px 24px; max-width: 1096px; overflow-x: auto;
+  }
+  .top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; width: 1040px; }
+  .top h1 { font-size: 17px; font-weight: 600; }
+  .top .sub { color: var(--muted); font-size: 12px; }
+  button {
+    font: 12.5px system-ui, sans-serif; color: var(--ink);
+    background: none; border: 1px solid var(--hairline); border-radius: 7px;
+    padding: 5px 12px; cursor: pointer;
+  }
+  button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  button:disabled { opacity: .35; cursor: default; }
+
+  #stage { position: relative; width: 1040px; height: 508px; }
+  #stage > div { position: absolute; }
+
+  .rec {
+    height: 36px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11.5px; font-weight: 600;
+    transition: transform .7s cubic-bezier(.4,0,.2,1), width .7s cubic-bezier(.4,0,.2,1),
+                height .7s, opacity .45s, font-size .7s;
+    will-change: transform;
+  }
+  .lbl { font-variant-numeric: tabular-nums; transition: transform .7s cubic-bezier(.4,0,.2,1), opacity .45s; }
+  .cell {
+    width: 40px; height: 38px; border: 1px solid var(--grid); border-radius: 5px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-variant-numeric: tabular-nums;
+    transition: transform .7s cubic-bezier(.4,0,.2,1), opacity .45s, width .7s, height .7s;
+  }
+  .cell b { font-size: 13px; font-weight: 600; }
+  .cell i { font-style: normal; font-size: 9px; color: var(--muted); }
+  .tick { width: 1px; background: var(--baseline); transition: transform .7s cubic-bezier(.4,0,.2,1), opacity .45s; }
+  .post { width: 2px; background: var(--ink2); transition: transform .7s cubic-bezier(.4,0,.2,1), opacity .45s; }
+  .sect { border: 1px solid var(--baseline); border-radius: 8px; transition: opacity .45s; }
+  .hl { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--ink); z-index: 3; }
+  .t0 { font-size: 0; }
+  .hidden { opacity: 0; pointer-events: none; }
+
+  .cap { width: 1040px; min-height: 74px; padding-top: 6px; border-top: 1px solid var(--grid); }
+  .cap h2 { font-size: 14.5px; font-weight: 600; margin-bottom: 3px; }
+  .cap p { color: var(--ink2); font-size: 13.5px; max-width: 900px; }
+  .cap code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .ctl { width: 1040px; display: flex; align-items: center; gap: 14px; padding-top: 12px; }
+  .dots { display: flex; gap: 7px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--grid); border: none; padding: 0; cursor: pointer; }
+  .dot.on { background: var(--ink); }
+  .spacer { flex: 1; }
+
+  @media (prefers-reduced-motion: reduce) { .rec, .lbl, .cell, .tick, .post { transition-duration: .01s; } }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top">
+    <h1>HNSW graph links — from <code>edges[point][level]</code> to the serialized file</h1>
+    <span class="sub">example from <code>graph_links/mod.rs</code></span>
+    <button id="theme">theme: auto</button>
+  </div>
+  <div id="stage" aria-hidden="true"></div>
+  <div class="cap" aria-live="polite"><h2 id="capT"></h2><p id="capB"></p></div>
+  <div class="ctl">
+    <button id="prev">◀ Prev</button>
+    <div class="dots" id="dots"></div>
+    <button id="next">Next ▶</button>
+    <div class="spacer"></div>
+    <button id="play">▶ Play</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+const TOPS    = [0, 4, 2, 2, 3, 1];      // point id -> top level
+const BACK    = [1, 4, 2, 3, 5, 0];      // rank -> point id
+const REINDEX = [5, 0, 2, 3, 1, 4];      // point id -> rank
+const LSTART  = [0, 6, 11, 15, 17];      // level -> first global record index
+
+const stage = document.getElementById('stage');
+const el = (cls, html, title) => {
+  const d = document.createElement('div');
+  d.className = cls; if (html) d.innerHTML = html; if (title) d.title = title;
+  stage.appendChild(d); return d;
+};
+const place = (d, x, y, w, h, hide) => {
+  d.style.transform = `translate(${x}px, ${y}px)`;
+  if (w != null) d.style.width = w + 'px';
+  if (h != null) d.style.height = h + 'px';
+  d.classList.toggle('hidden', !!hide);
+};
+
+// ---- records: one per (point, level) ----
+const recs = [];
+for (let p = 0; p < 6; p++)
+  for (let l = 0; l <= TOPS[p]; l++) {
+    const gi = l === 0 ? p : LSTART[l] + REINDEX[p];
+    const w = 30 + ((p * 13 + l * 7) % 5) * 7;             // fake byte length
+    const d = el('rec', String(p), `edges[${p}][${l}] — point ${p}, level ${l}`);
+    d.style.background = `var(--l${l})`; d.style.color = `var(--li${l})`;
+    recs.push({ p, l, gi, w, d });
+  }
+const byGi = i => recs.find(r => r.gi === i);
+const cum = i => { let s = 0; for (let j = 0; j < i; j++) s += byGi(j).w; return s; };
+const TOTAL = cum(18);
+
+// ---- table geometry (steps 0-3) ----
+const colX = pos => 337 + pos * 62;
+const rowY = l => 288 - l * 42;
+// ---- strip geometry (steps 4-6) ----
+const U0 = 89;                                             // uniform slots
+const V0 = (1040 - (TOTAL + 17 * 2)) / 2;                  // variable widths
+const vx = i => V0 + cum(i) + i * 2;
+
+// ---- static-ish elements ----
+const legend = el('lbl');
+legend.innerHTML = [0,1,2,3,4].map(l =>
+  `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:11.5px;color:var(--ink2)">
+   <span style="width:11px;height:11px;border-radius:3px;background:var(--l${l})"></span>level ${l}</span>`).join('');
+place(legend, 24, 10);
+
+const headers = [0,1,2,3,4,5].map(p => el('lbl',
+  `<span style="display:block;width:56px;text-align:center;font-size:11px;color:var(--muted)">pt ${p}</span>`));
+
+const mkArray = (name, vals, subs) => ({
+  label: el('lbl', `<span style="font-size:11.5px;color:var(--ink2)">${name}</span>`),
+  cells: vals.map((v, i) => el('cell', `<b>${v}</b><i>${subs[i]}</i>`)),
+});
+const backArr = mkArray('back_index &nbsp;(rank → point id) — build-time only', BACK, [0,1,2,3,4,5].map(i => 'rank ' + i));
+const reArr   = mkArray('reindex &nbsp;(point id → rank) — stored in the file', REINDEX, [0,1,2,3,4,5].map(i => 'pt ' + i));
+
+const posts = LSTART.map((s, l) => ({
+  line: el('post'),
+  label: el('lbl', `<span style="display:block;width:80px;margin-left:-40px;text-align:center;font-size:10.5px;color:var(--ink2)">lvl ${l} @ ${s}</span>`),
+}));
+const idxLbls = Array.from({length: 18}, (_, i) => el('lbl',
+  `<span style="display:block;width:46px;text-align:center;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums">${i}</span>`));
+const ticks = Array.from({length: 19}, (_, i) => ({
+  line: el('tick', '', `offsets[${i}] = ${cum(Math.min(i,18))}`),
+  label: el('lbl', `<span style="display:block;width:34px;margin-left:-17px;text-align:center;font-size:9.5px;color:var(--muted);font-variant-numeric:tabular-nums">${cum(Math.min(i,18))}</span>`),
+}));
+
+const formula = el('lbl',
+  `<span style="display:block;width:1040px;text-align:center;font:13px ui-monospace,Menlo,monospace;color:var(--ink)">
+   record_idx = level_offsets[<b style="color:var(--l2)">2</b>] + reindex[<b>3</b>] =
+   <b>11 + 3 = 14</b> &nbsp;→&nbsp; bytes offsets[14] .. offsets[15] = ${cum(14)} .. ${cum(15)}</span>`);
+
+const SECT = [
+  { x: 40,  w: 96,  name: 'header',        sub: 'written last' },
+  { x: 140, w: 132, name: 'level_offsets', sub: '5 × u64' },
+  { x: 276, w: 142, name: 'reindex',       sub: '6 × u32' },
+  { x: 422, w: 428, name: 'neighbors blob',sub: '18 records' },
+  { x: 854, w: 146, name: 'offsets',       sub: '19 posts, bitpacked' },
+].map(s => ({ ...s,
+  box: el('sect'),
+  label: el('lbl', `<span style="display:block;width:${s.w}px;text-align:center;font-size:11px;color:var(--ink2)">${s.name}<br>
+                    <span style="font-size:9.5px;color:var(--muted)">${s.sub}</span></span>`),
+}));
+const loCells = LSTART.map(v => el('cell', `<b>${v}</b>`));
+
+// ---- per-step layout ----
+function layout(s) {
+  document.querySelectorAll('.hl').forEach(d => d.classList.remove('hl'));
+
+  for (const r of recs) {
+    r.d.classList.remove('t0');
+    if (s <= 3) {
+      const pos = s === 0 || (s === 3 && r.l === 0) ? r.p : REINDEX[r.p];
+      place(r.d, colX(pos), rowY(r.l), 56, 36);
+    } else if (s === 4) {
+      place(r.d, U0 + r.gi * 48, 210, 46, 36);
+    } else if (s <= 6) {
+      place(r.d, vx(r.gi), 210, r.w, 36);
+      if (s === 6 && r.gi === 14) r.d.classList.add('hl');
+    } else {
+      r.d.classList.add('t0');
+      place(r.d, 428 + cum(r.gi) * 0.5 + r.gi, 249, r.w * 0.5, 26);
+    }
+  }
+
+  headers.forEach((h, p) => place(h, colX(s === 0 ? p : REINDEX[p]), 94, null, null, s > 3));
+
+  const arr = (a, x0, y, hide, pitch = 44) => {
+    place(a.label, x0, y - 18, null, null, hide);
+    a.cells.forEach((c, i) => place(c, x0 + i * pitch, y, 40, 38, hide));
+  };
+  arr(backArr, 390, 386, s < 1 || s > 3);
+  if (s <= 3)      arr(reArr, 390, 452, s < 2);
+  else if (s <= 6) arr(reArr, 390, 340, false);
+  else reArr.cells.forEach((c, i) => { place(c, 282 + i * 22.5, 246, 20, 32, false); place(reArr.label, 0, 0, null, null, true); });
+  if (s === 6) reArr.cells[3].classList.add('hl');
+
+  posts.forEach((po, l) => {
+    const hide = s < 4 || s > 6;
+    const x = s === 4 ? U0 + LSTART[l] * 48 - 2 : vx(LSTART[l]) - 2;
+    place(po.line, x, 182, 2, 62, hide);
+    place(po.label, x, 164, null, null, hide);
+    if (s === 6 && l === 2) po.line.classList.add('hl');
+  });
+
+  idxLbls.forEach((d, i) => place(d, U0 + i * 48, 252, null, null, s !== 4));
+
+  ticks.forEach((t, i) => {
+    const hide = s < 5;
+    const x = V0 + cum(i) + Math.min(i * 2, 34) - 1.5;
+    if (s === 7) place(t.line, 860 + cum(i) / TOTAL * 134, 242, 1, 40, hide);
+    else place(t.line, x, 204, 1, 48, hide);
+    place(t.label, x, 256, null, null, hide || s === 7);
+    if (s === 6 && (i === 14 || i === 15)) t.line.classList.add('hl');
+  });
+
+  place(formula, 0, 122, null, null, s !== 6);
+
+  SECT.forEach(sc => { place(sc.box, sc.x, 230, sc.w, 64, s !== 7); place(sc.label, sc.x, 302, null, null, s !== 7); });
+  loCells.forEach((c, i) => place(c, 148 + i * 24, 246, 22, 32, s !== 7));
+}
+
+// ---- steps ----
+const STEPS = [
+  ['The input: edges[point][level]',
+   'Each block is one record — <code>edges[p][l]</code>, the neighbor list of point <code>p</code> at level <code>l</code>. Color encodes the level; the number is the point id. Every point has level 0, and a point with top level <code>t</code> has records for levels 0…<code>t</code> — a jagged structure. (Top levels here: 0, 4, 2, 2, 3, 1.)'],
+  ['Sort points by top level, descending',
+   '<code>back_index</code> is the sorted order (rank → point id): [1, 4, 2, 3, 5, 0]. The payoff: the points present on any level are now exactly a <b>prefix</b> of this order — level 2 is ranks 0–3, level 3 is ranks 0–1 — so no per-level point lists are ever needed.'],
+  ['Invert it: reindex',
+   '<code>reindex[point_id] = rank</code> — the inverse permutation, and the only map the file stores. Because the prefixes nest, a point\'s single rank locates its record inside <i>every</i> level block it appears in.'],
+  ['Exception: level 0 keeps id order',
+   'All points exist on level 0, so its row is written in plain point-id order instead of rank order. A level-0 lookup indexes directly with <code>point_id</code> and skips <code>reindex</code> entirely — the hot path on the bottom layer.'],
+  ['Flatten: one blob, level by level',
+   'Rows concatenate bottom-up: level 0\'s block, then level 1\'s, … Each slot gets a global record index 0–17, and <code>level_offsets</code> = [0, 6, 11, 15, 17] marks where each level\'s block starts. Note each block repeats the same rank order.'],
+  ['Real records vary in size → offsets',
+   'Records are variable-length (raw u32s in Plain, bit-packed links in Compressed), so a <b>fencepost array</b> of 19 = 18 + 1 boundaries records where each one starts: record <code>i</code> spans <code>offsets[i] .. offsets[i+1]</code>. Two equal neighbors ⇒ an empty record.'],
+  ['Lookup: links of point 3 at level 2',
+   'Jump to level 2\'s block, then to point 3\'s rank within it. On level 0 it is simply <code>record_idx = point_id</code>. This is <code>offset_idx()</code> in <code>view.rs</code>.'],
+  ['The serialized file',
+   '<code>header | level_offsets | reindex | neighbors blob | offsets</code>. The header is written last (a placeholder is patched via seek): counts, <code>m</code>/<code>m0</code>, format version, compression parameters. In the compressed formats <code>offsets</code> is itself bit-packed (<code>bitpacking_ordered</code>). <code>back_index</code> never reaches disk.'],
+];
+
+let step = 0, timer = null;
+const dots = STEPS.map((_, i) => {
+  const b = document.createElement('button');
+  b.className = 'dot'; b.ariaLabel = 'step ' + (i + 1);
+  b.onclick = () => go(i, true);
+  document.getElementById('dots').appendChild(b); return b;
+});
+function go(s, manual) {
+  step = Math.max(0, Math.min(STEPS.length - 1, s));
+  layout(step);
+  document.getElementById('capT').innerHTML = (step + 1) + '. ' + STEPS[step][0];
+  document.getElementById('capB').innerHTML = STEPS[step][1];
+  dots.forEach((d, i) => d.classList.toggle('on', i === step));
+  document.getElementById('prev').disabled = step === 0;
+  document.getElementById('next').disabled = step === STEPS.length - 1;
+  if (manual) stopPlay();
+}
+function stopPlay() {
+  clearInterval(timer); timer = null;
+  document.getElementById('play').textContent = '▶ Play';
+}
+document.getElementById('prev').onclick = () => go(step - 1, true);
+document.getElementById('next').onclick = () => go(step + 1, true);
+document.getElementById('play').onclick = () => {
+  if (timer) return stopPlay();
+  if (step === STEPS.length - 1) go(0);
+  document.getElementById('play').textContent = '⏸ Pause';
+  timer = setInterval(() => step < STEPS.length - 1 ? go(step + 1) : stopPlay(), 4200);
+};
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') go(step + 1, true);
+  if (e.key === 'ArrowLeft') go(step - 1, true);
+});
+document.getElementById('theme').onclick = e => {
+  const cur = document.documentElement.dataset.theme || 'auto';
+  const nxt = cur === 'auto' ? 'dark' : cur === 'dark' ? 'light' : 'auto';
+  if (nxt === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = nxt;
+  e.target.textContent = 'theme: ' + nxt;
+};
+
+// first paint without flight-from-origin; ?step=N deep-links a step, ?theme= forces a mode
+const themeParam = new URLSearchParams(location.search).get('theme');
+if (themeParam === 'light' || themeParam === 'dark') {
+  document.documentElement.dataset.theme = themeParam;
+  document.getElementById('theme').textContent = 'theme: ' + themeParam;
+}
+stage.style.visibility = 'hidden';
+document.querySelectorAll('#stage > div').forEach(d => d.style.transition = 'none');
+go(+(new URLSearchParams(location.search).get('step') || 1) - 1);
+requestAnimationFrame(() => requestAnimationFrame(() => {
+  document.querySelectorAll('#stage > div').forEach(d => d.style.transition = '');
+  stage.style.visibility = '';
+}));
+</script>
+</body>
+</html>
